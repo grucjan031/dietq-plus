@@ -3,9 +3,13 @@ const cors = require('cors');
 const db = require('./db');
 const auth = require('./auth');
 const bcrypt = require('bcrypt');
+const fs = require('fs-extra');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+const path = require('path');
+const { upload, photoDir } = require('./upload');
 
 // Middleware
 app.use(cors({
@@ -13,6 +17,36 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+
+// Endpoint do pobierania zdjęcia przepisu - bez wymagania autoryzacji
+app.get('/api/photos/:fileName', async (req, res) => {
+  try {
+    const { fileName } = req.params;
+    const filePath = path.join(photoDir, fileName);
+    
+    console.log(`Żądanie zdjęcia: ${fileName}`);
+    console.log(`Szukam pliku w: ${filePath}`);
+    
+    // Sprawdź czy plik istnieje
+    if (!fs.existsSync(filePath)) {
+      console.log(`Plik nie znaleziony: ${filePath}`);
+      // Zwróć domyślny obrazek zamiast błędu
+      const defaultImagePath = path.join(__dirname, 'no-image.jpg');
+      if (fs.existsSync(defaultImagePath)) {
+        return res.sendFile(defaultImagePath);
+      } else {
+        return res.status(404).json({ error: 'Zdjęcie nie znalezione' });
+      }
+    }
+    
+    // Wyślij plik
+    res.sendFile(filePath);
+    
+  } catch (err) {
+    console.error('Błąd przy pobieraniu zdjęcia:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Publiczne endpointy (nie wymagają autoryzacji)
 app.post('/api/login', async (req, res) => {
@@ -403,6 +437,122 @@ app.get('/api/profile', async (req, res) => {
     
     res.json(result.rows[0]);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint do wgrywania zdjęcia dla przepisu (podczas tworzenia lub aktualizacji)
+app.post('/api/dania/:id/photo', auth.authenticateToken, upload.single('photo'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log(`Rozpoczęcie wgrywania zdjęcia dla przepisu ID: ${id}`);
+    
+    if (!req.file) {
+      console.log('Błąd: Nie przesłano pliku');
+      return res.status(400).json({ error: 'Nie przesłano pliku' });
+    }
+    
+    console.log('Informacje o pliku:', req.file);
+    
+    // Pobierz informacje o przepisie
+    const danieResult = await db.query('SELECT * FROM Dania WHERE id = $1', [id]);
+    
+    if (danieResult.rows.length === 0) {
+      console.log(`Przepis o ID ${id} nie znaleziony`);
+      return res.status(404).json({ error: 'Przepis nie znaleziony' });
+    }
+    
+    const danie = danieResult.rows[0];
+    console.log('Dodaję zdjęcie dla przepisu:', danie.nazwa_dania);
+    
+    // Pobierz ścieżkę pliku tymczasowego
+    const tempPath = req.file.path;
+    console.log('Plik tymczasowy:', tempPath);
+    
+    // Utwórz prostą nazwę pliku opartą na ID, unikając problemów z nazwami
+    const fileName = `dish_${id}.jpg`;
+    const targetPath = path.join(photoDir, fileName);
+    
+    console.log('Ścieżka docelowa:', targetPath);
+    
+    // Usuń stary plik jeśli istnieje
+    try {
+      if (fs.existsSync(targetPath)) {
+        fs.unlinkSync(targetPath);
+        console.log('Usunięto stare zdjęcie');
+      }
+    } catch (err) {
+      console.error('Błąd podczas usuwania starego zdjęcia:', err);
+      // Kontynuuj mimo błędu
+    }
+    
+    // Przenieś plik używając fs.renameSync zamiast copyFileSync
+    try {
+      fs.copyFileSync(tempPath, targetPath);
+      console.log('Skopiowano plik');
+      
+      // Usuń plik tymczasowy po skopiowaniu
+      fs.unlinkSync(tempPath);
+      console.log('Usunięto plik tymczasowy');
+    } catch (err) {
+      console.error('Błąd podczas operacji na pliku:', err);
+      return res.status(500).json({ error: `Błąd podczas zapisywania zdjęcia: ${err.message}` });
+    }
+    
+    // Zaktualizuj przepis w bazie danych
+    try {
+      await db.query('UPDATE Dania SET ma_zdjecie = true WHERE id = $1', [id]);
+      console.log('Zaktualizowano flagę ma_zdjecie w bazie danych');
+    } catch (dbErr) {
+      console.error('Błąd podczas aktualizacji bazy danych:', dbErr);
+      return res.status(500).json({ error: `Błąd podczas aktualizacji bazy danych: ${dbErr.message}` });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Zdjęcie zapisane pomyślnie',
+      fileName: fileName
+    });
+    
+  } catch (err) {
+    console.error('Błąd ogólny:', err);
+    res.status(500).json({ error: `Błąd podczas przetwarzania: ${err.message}` });
+  }
+});
+
+// Endpoint do usuwania zdjęcia przepisu
+app.delete('/api/dania/:id/photo', auth.authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Pobierz informacje o przepisie
+    const danieResult = await db.query('SELECT * FROM Dania WHERE id = $1', [id]);
+    
+    if (danieResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Przepis nie znaleziony' });
+    }
+    
+    // Utwórz nazwę pliku bazując na ID
+    const fileName = `dish_${id}.jpg`;
+    const filePath = path.join(photoDir, fileName);
+    
+    // Usuń plik jeśli istnieje
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      console.log(`Usunięto zdjęcie ${fileName}`);
+    }
+    
+    // Aktualizuj przepis, aby nie zawierał informacji o zdjęciu
+    await db.query(
+      'UPDATE Dania SET ma_zdjecie = false WHERE id = $1',
+      [id]
+    );
+    
+    res.json({ success: true, message: 'Zdjęcie usunięte' });
+    
+  } catch (err) {
+    console.error('Błąd przy usuwaniu zdjęcia:', err);
     res.status(500).json({ error: err.message });
   }
 });

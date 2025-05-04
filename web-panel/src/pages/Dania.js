@@ -50,7 +50,7 @@ function Dania() {
           Dodaj Przepis
         </Link>
       </div>
-      
+
       {dania.length === 0 ? (
         <div className="alert alert-info">Brak przepisów w bazie danych.</div>
       ) : (
@@ -68,7 +68,19 @@ function Dania() {
               {dania.map((danie) => (
                 <tr key={danie.id}>
                   <td>{danie.id}</td>
-                  <td>{danie.nazwa_dania}</td>
+                  <td>
+                    <div className="d-flex align-items-center">
+                      <img
+                        src={danie.ma_zdjecie 
+                          ? `${API_URL}/photos/dish_${danie.id}.jpg?${new Date().getTime()}` 
+                          : `${API_URL}/photos/no-image.jpg`}
+                        alt={danie.nazwa_dania}
+                        className="me-2 rounded"
+                        style={{ width: '50px', height: '50px', objectFit: 'cover' }}
+                      />
+                      {danie.nazwa_dania}
+                    </div>
+                  </td>
                   <td>
                     {danie.opis && danie.opis.length > 100
                       ? `${danie.opis.substring(0, 100)}...`
@@ -76,20 +88,20 @@ function Dania() {
                   </td>
                   <td>
                     <div className="btn-group">
-                      <Link 
+                      <Link
                         to={`/dania/${danie.id}`}
                         className="btn btn-sm btn-info me-1"
                       >
                         Szczegóły
                       </Link>
-                      <Link 
-                        to={`/dania/${danie.id}/edit`} 
+                      <Link
+                        to={`/dania/${danie.id}/edit`}
                         className="btn btn-sm btn-warning me-1"
                       >
                         Edytuj
                       </Link>
-                      <button 
-                        onClick={() => handleDelete(danie.id)} 
+                      <button
+                        onClick={() => handleDelete(danie.id)}
                         className="btn btn-sm btn-danger"
                       >
                         Usuń

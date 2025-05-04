@@ -4,16 +4,17 @@ import axios from 'axios';
 
 const API_URL = 'http://localhost:5000/api';
 
+
 function DanieDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
-  
+  const [photoUrl, setPhotoUrl] = useState('');
   const [danie, setDanie] = useState(null);
   const [skladniki, setSkladniki] = useState([]);
   const [dostepneSkladniki, setDostepneSkladniki] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  
+
   const [newSkladnik, setNewSkladnik] = useState({
     skladnik_id: '',
     ilosc: '',
@@ -31,6 +32,13 @@ function DanieDetails() {
       // Pobierz szczegóły przepisu
       const danieResponse = await axios.get(`${API_URL}/dania/${id}`);
       setDanie(danieResponse.data);
+      
+      // Jeśli przepis ma zdjęcie, ustaw URL
+      if (danieResponse.data.ma_zdjecie) {
+        setPhotoUrl(`${API_URL}/photos/dish_${id}.jpg?${new Date().getTime()}`);
+      } else {
+        setPhotoUrl(`${API_URL}/photos/no-image.jpg`);
+      }
       
       // Pobierz składniki tego przepisu
       if (danieResponse.data.skladniki) {
@@ -74,7 +82,7 @@ function DanieDetails() {
         danie_id: id,
         ...newSkladnik
       });
-      
+
       // Reset form i odśwież dane
       setNewSkladnik({
         skladnik_id: '',
@@ -118,8 +126,8 @@ function DanieDetails() {
           <Link to={`/dania/${id}/edit`} className="btn btn-warning me-2">
             Edytuj Przepis
           </Link>
-          <button 
-            onClick={handleDelete} 
+          <button
+            onClick={handleDelete}
             className="btn btn-danger"
           >
             Usuń Przepis
@@ -132,6 +140,16 @@ function DanieDetails() {
           <div className="card">
             <div className="card-body">
               <h5 className="card-title">Informacje o przepisie</h5>
+              {photoUrl && (
+                <div className="text-center my-3">
+                  <img
+                    src={photoUrl}
+                    alt={danie.nazwa_dania}
+                    className="img-fluid rounded"
+                    style={{ maxHeight: '300px' }}
+                  />
+                </div>
+              )}
               <div className="mb-3">
                 <h6>Opis:</h6>
                 <p>{danie.opis || 'Brak opisu'}</p>
