@@ -1,13 +1,94 @@
 const express = require('express');
 const cors = require('cors');
 const db = require('./db');
+const auth = require('./auth');
+const bcrypt = require('bcrypt');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:3000', // Adres frontendu
+  credentials: true
+}));
 app.use(express.json());
+
+// Publiczne endpointy (nie wymagają autoryzacji)
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    // Znajdź użytkownika w bazie
+    const result = await db.query('SELECT * FROM Uzytkownicy WHERE username = $1', [username]);
+    
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Nieprawidłowa nazwa użytkownika lub hasło' });
+    }
+    
+    const user = result.rows[0];
+    
+    // Sprawdź hasło
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(400).json({ error: 'Nieprawidłowa nazwa użytkownika lub hasło' });
+    }
+    
+    // Generuj token
+    const token = auth.generateToken(user);
+    
+    res.json({ 
+      user: { id: user.id, username: user.username, rola: user.rola },
+      token 
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Opcjonalny endpoint rejestracji (używany tylko jeśli chcemy pozwolić na rejestrację nowych użytkowników)
+app.post('/api/register', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    // Sprawdź czy użytkownik już istnieje
+    const userExists = await db.query('SELECT * FROM Uzytkownicy WHERE username = $1', [username]);
+    
+    if (userExists.rows.length > 0) {
+      return res.status(400).json({ error: 'Użytkownik o takiej nazwie już istnieje' });
+    }
+    
+    // Hashowanie hasła
+    const hashedPassword = await auth.hashPassword(password);
+    
+    // Zapisz nowego użytkownika
+    const result = await db.query(
+      'INSERT INTO Uzytkownicy (username, password) VALUES ($1, $2) RETURNING id, username, rola',
+      [username, hashedPassword]
+    );
+    
+    const user = result.rows[0];
+    
+    // Generuj token JWT
+    const token = auth.generateToken(user);
+    
+    res.status(201).json({ user, token });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Weryfikacja tokenu - pomocny endpoint do sprawdzania ważności tokenu
+app.get('/api/verify-token', auth.authenticateToken, (req, res) => {
+  res.json({ valid: true, user: req.user });
+});
+
+// =================================================================
+// WSZYSTKIE PONIŻSZE ENDPOINTY WYMAGAJĄ AUTORYZACJI
+// =================================================================
+
+// Middleware do weryfikacji tokenu dla wszystkich pozostałych endpointów /api/
+app.use('/api', auth.authenticateToken);
 
 // API dla Dania (Przepisy)
 app.get('/api/dania', async (req, res) => {
@@ -51,10 +132,19 @@ app.get('/api/dania/:id', async (req, res) => {
 app.post('/api/dania', async (req, res) => {
   try {
     const { nazwa_dania, opis, sposob_przygotowania } = req.body;
+    
+    // Zapisz informacje o użytkowniku dodającym przepis
+    const userId = req.user.id;
+    const username = req.user.username;
+    
     const result = await db.query(
       'INSERT INTO Dania (nazwa_dania, opis, sposob_przygotowania) VALUES ($1, $2, $3) RETURNING *',
       [nazwa_dania, opis, sposob_przygotowania]
     );
+    
+    // Możesz tu dodać logowanie operacji
+    console.log(`Przepis "${nazwa_dania}" dodany przez użytkownika ${username} (ID: ${userId})`);
+    
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -65,6 +155,11 @@ app.put('/api/dania/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { nazwa_dania, opis, sposob_przygotowania } = req.body;
+    
+    // Zapisz informacje o użytkowniku modyfikującym przepis
+    const userId = req.user.id;
+    const username = req.user.username;
+    
     const result = await db.query(
       'UPDATE Dania SET nazwa_dania = $1, opis = $2, sposob_przygotowania = $3 WHERE id = $4 RETURNING *',
       [nazwa_dania, opis, sposob_przygotowania, id]
@@ -74,6 +169,9 @@ app.put('/api/dania/:id', async (req, res) => {
       return res.status(404).json({ error: 'Przepis nie znaleziony' });
     }
 
+    // Możesz tu dodać logowanie operacji
+    console.log(`Przepis ID: ${id} zaktualizowany przez użytkownika ${username} (ID: ${userId})`);
+    
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -83,11 +181,19 @@ app.put('/api/dania/:id', async (req, res) => {
 app.delete('/api/dania/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Zapisz informacje o użytkowniku usuwającym przepis
+    const userId = req.user.id;
+    const username = req.user.username;
+    
     const result = await db.query('DELETE FROM Dania WHERE id = $1 RETURNING *', [id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Przepis nie znaleziony' });
     }
+    
+    // Możesz tu dodać logowanie operacji
+    console.log(`Przepis ID: ${id} usunięty przez użytkownika ${username} (ID: ${userId})`);
     
     res.json({ message: 'Przepis usunięty', danie: result.rows[0] });
   } catch (err) {
@@ -95,7 +201,7 @@ app.delete('/api/dania/:id', async (req, res) => {
   }
 });
 
-// API dla Składników
+// API dla Składników - również zabezpieczone
 app.get('/api/skladniki', async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM Skladniki ORDER BY nazwa_skladnika');
@@ -123,10 +229,19 @@ app.get('/api/skladniki/:id', async (req, res) => {
 app.post('/api/skladniki', async (req, res) => {
   try {
     const { nazwa_skladnika, kcal, bialko, weglowodany, tluszcze } = req.body;
+    
+    // Zapisz informacje o użytkowniku dodającym składnik
+    const userId = req.user.id;
+    const username = req.user.username;
+    
     const result = await db.query(
       'INSERT INTO Skladniki (nazwa_skladnika, kcal, bialko, weglowodany, tluszcze) VALUES ($1, $2, $3, $4, $5) RETURNING *',
       [nazwa_skladnika, kcal, bialko, weglowodany, tluszcze]
     );
+    
+    // Możesz tu dodać logowanie operacji
+    console.log(`Składnik "${nazwa_skladnika}" dodany przez użytkownika ${username} (ID: ${userId})`);
+    
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -137,6 +252,11 @@ app.put('/api/skladniki/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { nazwa_skladnika, kcal, bialko, weglowodany, tluszcze } = req.body;
+    
+    // Zapisz informacje o użytkowniku modyfikującym składnik
+    const userId = req.user.id;
+    const username = req.user.username;
+    
     const result = await db.query(
       'UPDATE Skladniki SET nazwa_skladnika = $1, kcal = $2, bialko = $3, weglowodany = $4, tluszcze = $5 WHERE id = $6 RETURNING *',
       [nazwa_skladnika, kcal, bialko, weglowodany, tluszcze, id]
@@ -145,6 +265,9 @@ app.put('/api/skladniki/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Składnik nie znaleziony' });
     }
+    
+    // Możesz tu dodać logowanie operacji
+    console.log(`Składnik ID: ${id} zaktualizowany przez użytkownika ${username} (ID: ${userId})`);
     
     res.json(result.rows[0]);
   } catch (err) {
@@ -155,11 +278,19 @@ app.put('/api/skladniki/:id', async (req, res) => {
 app.delete('/api/skladniki/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Zapisz informacje o użytkowniku usuwającym składnik
+    const userId = req.user.id;
+    const username = req.user.username;
+    
     const result = await db.query('DELETE FROM Skladniki WHERE id = $1 RETURNING *', [id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Składnik nie znaleziony' });
     }
+    
+    // Możesz tu dodać logowanie operacji
+    console.log(`Składnik ID: ${id} usunięty przez użytkownika ${username} (ID: ${userId})`);
     
     res.json({ message: 'Składnik usunięty', skladnik: result.rows[0] });
   } catch (err) {
@@ -167,7 +298,7 @@ app.delete('/api/skladniki/:id', async (req, res) => {
   }
 });
 
-// API dla relacji Dania-Składniki
+// API dla relacji Dania-Składniki - również zabezpieczone
 app.get('/api/dania-skladniki', async (req, res) => {
   try {
     const result = await db.query(`
@@ -185,10 +316,19 @@ app.get('/api/dania-skladniki', async (req, res) => {
 app.post('/api/dania-skladniki', async (req, res) => {
   try {
     const { danie_id, skladnik_id, ilosc, jednostka } = req.body;
+    
+    // Zapisz informacje o użytkowniku dodającym relację
+    const userId = req.user.id;
+    const username = req.user.username;
+    
     const result = await db.query(
       'INSERT INTO Dania_Skladniki (danie_id, skladnik_id, ilosc, jednostka) VALUES ($1, $2, $3, $4) RETURNING *',
       [danie_id, skladnik_id, ilosc, jednostka]
     );
+    
+    // Możesz tu dodać logowanie operacji
+    console.log(`Relacja danie_id: ${danie_id}, skladnik_id: ${skladnik_id} dodana przez użytkownika ${username} (ID: ${userId})`);
+    
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -199,6 +339,11 @@ app.put('/api/dania-skladniki/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { ilosc, jednostka } = req.body;
+    
+    // Zapisz informacje o użytkowniku modyfikującym relację
+    const userId = req.user.id;
+    const username = req.user.username;
+    
     const result = await db.query(
       'UPDATE Dania_Skladniki SET ilosc = $1, jednostka = $2 WHERE id = $3 RETURNING *',
       [ilosc, jednostka, id]
@@ -207,6 +352,9 @@ app.put('/api/dania-skladniki/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Relacja nie znaleziona' });
     }
+    
+    // Możesz tu dodać logowanie operacji
+    console.log(`Relacja ID: ${id} zaktualizowana przez użytkownika ${username} (ID: ${userId})`);
     
     res.json(result.rows[0]);
   } catch (err) {
@@ -217,13 +365,43 @@ app.put('/api/dania-skladniki/:id', async (req, res) => {
 app.delete('/api/dania-skladniki/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Zapisz informacje o użytkowniku usuwającym relację
+    const userId = req.user.id;
+    const username = req.user.username;
+    
     const result = await db.query('DELETE FROM Dania_Skladniki WHERE id = $1 RETURNING *', [id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Relacja nie znaleziona' });
     }
     
+    // Możesz tu dodać logowanie operacji
+    console.log(`Relacja ID: ${id} usunięta przez użytkownika ${username} (ID: ${userId})`);
+    
     res.json({ message: 'Relacja usunięta', relacja: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint do sprawdzania aktualnie zalogowanego użytkownika
+app.get('/api/profile', async (req, res) => {
+  try {
+    // req.user zawiera informacje o zalogowanym użytkowniku (dodane przez middleware authenticateToken)
+    const userId = req.user.id;
+    
+    // Pobierz pełne dane użytkownika z bazy (bez hasła)
+    const result = await db.query(
+      'SELECT id, username, rola, data_utworzenia FROM Uzytkownicy WHERE id = $1',
+      [userId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Użytkownik nie znaleziony' });
+    }
+    
+    res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
