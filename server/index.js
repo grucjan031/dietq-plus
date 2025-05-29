@@ -13,8 +13,8 @@ const { upload, photoDir } = require('./upload');
 
 // Middleware
 app.use(cors({
-  origin: 'http://localhost:3000', // Adres frontendu
-  credentials: true
+  origin: ['http://localhost:3000', 'http://192.168.55.*:3000'],
+    credentials: true
 }));
 app.use(express.json());
 
