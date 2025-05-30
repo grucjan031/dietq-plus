@@ -83,24 +83,38 @@ fun DayDetailScreen(
 
     val dailyNutrition = viewModel.calculateDailyNutrition(date)
 
-    Scaffold(
-        topBar = {
-            @OptIn(ExperimentalMaterial3Api::class)
-            (TopAppBar(
-        title = { Text("Plan na ${date.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))}") },
-        navigationIcon = {
-            IconButton(onClick = onBackClick) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Wróć")
+    Column(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
+                    start = 16.dp, end = 16.dp, bottom = 8.dp
+                ),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (date != LocalDate.now()) {
+                IconButton(onClick = onBackClick) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Wróć")
+                }
             }
+
+            Text(
+                text = "Plan na ${date.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))}",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
         }
-    ))
-        }
-    ) { padding ->
+
         LazyColumn(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp),
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                // Dodanie paddingu na dole dla dolnego paska nawigacji
+                .padding(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 80.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
@@ -117,7 +131,6 @@ fun DayDetailScreen(
                         meal = dayPlan.meals[mealType] ?: Meal(mealType),
                         onAddDishClick = { onAddDishClick(mealType) },
                         onRemoveDishClick = { dishIndex ->
-                            // Pokaż dialog z opcją usunięcia z listy zakupów
                             viewModel.removeDishFromMealAndShoppingList(date, mealType, dishIndex, true)
                         },
                         onDishClick = onDishClick
